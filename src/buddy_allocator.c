@@ -49,8 +49,24 @@ void buddy_obj_free(long size, void *obj) {
  * Hint: this function behaves similar to "obj_alloc" but what happens if
  *       npages is larger than MAX_CHUNK_SIZE?
  */
+ //Find the smallest power-of-two block large enough for the request, 
+ //check that it fits, and let buddy_obj_alloc() handle the actual allocation.
 void *page_alloc_n(int npages) {
-    return NULL;
+    if (npages <= 0) {
+        return NULL;
+    }
+
+    int pages = 1;
+
+    while (pages < npages) {
+        pages *= 2;
+    }
+
+    if (pages * PAGE_SIZE > MAX_CHUNK_SIZE) {
+        return NULL;
+    }
+
+    return buddy_obj_alloc((long)pages * PAGE_SIZE);
 }
 
 /*
@@ -59,5 +75,20 @@ void *page_alloc_n(int npages) {
  * Hint: this function should handle the inverse case of the "alloc" function!
  */
 void page_free_n(void *ptr, int npages) {
+    if (ptr == NULL || npages <= 0) {
+        return;
+    }
+
+    int pages = 1;
+
+    while (pages < npages) {
+        pages *= 2;
+    }
+
+    if (pages * PAGE_SIZE > MAX_CHUNK_SIZE) {
+        return;
+    }
+
+    buddy_obj_free((long)pages * PAGE_SIZE, ptr);
 
 }
