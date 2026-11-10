@@ -28,7 +28,8 @@ int mem_init()
         return -1;
     }
 
-    dram = malloc(sizeof(char) * size);
+    mem_size = size;  // publish the device size so buddy_init can read it
+    dram = malloc(sizeof(char) * mem_size);
     if (!dram) {
         fprintf(stderr, "Could not allocate memory\n");
         return -1;
