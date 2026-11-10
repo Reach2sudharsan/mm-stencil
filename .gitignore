@@ -1,0 +1,4 @@
+# Build artifacts
+bin/*.o
+bin/test_buddy
+*.dSYM/
