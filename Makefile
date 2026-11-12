@@ -34,3 +34,9 @@ test_buddy:
 
 clean:
 	rm -rf bin/*
+
+# Separate build: test the REAL spinlock instead of the test harness stubs.
+test_buddy_real_spinlock:
+	$(CC) $(TESTFLAGS) -Dpage_alloc_n=slab_page_alloc_n -Dpage_free_n=slab_page_free_n $(LIBFLAGS) src/slab_allocator.c -o bin/slab_renamed.o
+	$(CC) $(TESTFLAGS) -DTEST_REAL_SPINLOCK test/test_buddy.c src/buddy_allocator.c util/spinlock.c bin/slab_renamed.o -o bin/test_buddy_real_spinlock
+	./bin/test_buddy_real_spinlock

@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
 
 #include "include/buddy_allocator.h"   /* free_list, chunk_t, buddy_obj_*  */
 #include "sys/mem/mem.h"               /* dram, mem_size                   */
@@ -16,10 +18,12 @@
 #define MAX_LIST_IDX   (NUM_LISTS - 1)          /* the MAX_CHUNK_SIZE class  */
 #define TEST_MEM_SIZE  (262144L)                /* 256 KB: upper half = 2 x 64 KB */
 
-/* --- no-op spinlock so buddy_obj_* don't deadlock (see header comment) --- */
+/* Normal tests use mock locks. The real-spinlock target links the actual implementation. */
+#ifndef TEST_REAL_SPINLOCK
 void spinlock_init(spinlock_t *lock)   { (void)lock; }
 void spinlock_lock(spinlock_t *lock)   { (void)lock; }
 void spinlock_unlock(spinlock_t *lock) { (void)lock; }
+#endif
 
 /* ----------------------------- test plumbing ----------------------------- */
 static int checks_run = 0;
@@ -230,7 +234,64 @@ static void test_alloc_free_alloc_determinism(void) {
     dump_free_list("determinism cycles");
 }
 
+// ========================= ADDITIONAL TEST ============================
+// Buddy merging should work when the arena is page-aligned but NOT 64 KB aligned.
+static void test_alignment_and_merging(void) {
+    printf("\nExtra test: merging with an offset memory arena\n");
+
+    if (dram != NULL) {
+        free(dram);
+        dram = NULL;
+    }
+    mem_size = TEST_MEM_SIZE;
+
+    /* Allocate extra room so shifting dram doesn't run past the allocation. */
+    void *raw = aligned_alloc(MAX_CHUNK_SIZE,
+                              (size_t)(TEST_MEM_SIZE + MAX_CHUNK_SIZE));
+    if (raw == NULL) {
+        fprintf(stderr, "aligned_alloc failed\n");
+        exit(2);
+    }
+    dram = (char *)raw + PAGE_SIZE; /* Page-aligned, but offset by 4 KB. */
+
+    slab_init();
+    buddy_init();
+
+    void *p = buddy_obj_alloc(PAGE_SIZE);
+    check(p != NULL, "4 KB allocation from offset arena succeeds\n");
+    if (p != NULL) {
+        buddy_obj_free(PAGE_SIZE, p);
+        check(total_free_bytes() == arena_bytes() &&
+              count_chunks(MAX_LIST_IDX) == initial_top_chunks(),
+              "freed 4 KB merges back into two full 64 KB blocks\n");
+    }
+
+    dram = NULL; /* Never pass the shifted address to free(). */
+    free(raw);
+}
+
+#ifdef TEST_REAL_SPINLOCK
+// A broken spinlock must fail rather than hang the test process forever.
+static void spinlock_timeout(int signo) {
+    (void)signo;
+    static const char message[] = "[FAIL] real spinlock did not acquire within 2 seconds\n";
+    (void)write(STDERR_FILENO, message, sizeof(message) - 1);
+    _exit(1);
+}
+#endif
+
 int main(void) {
+#ifdef TEST_REAL_SPINLOCK
+    signal(SIGALRM, spinlock_timeout);
+    alarm(2);
+    spinlock_t lock;
+    spinlock_init(&lock);
+    spinlock_lock(&lock);
+    spinlock_unlock(&lock);
+    alarm(0);
+    puts("[ ok ] real spinlock acquired and released");
+    return 0;
+#else
     printf("=== buddy allocator functional tests ===\n");
     printf("(arena = %ld bytes, upper half handed out as %d x %d-byte chunks)\n",
            TEST_MEM_SIZE, (int)((TEST_MEM_SIZE / 2) / MAX_CHUNK_SIZE), MAX_CHUNK_SIZE);
@@ -239,8 +300,10 @@ int main(void) {
     test_exhaustion_then_free();
     test_oversized_request();
     test_alloc_free_alloc_determinism();
+    test_alignment_and_merging();
 
     printf("\n=== summary: %d checks, %d failed ===\n",
            checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
+#endif
 }
